@@ -45,22 +45,20 @@ AutoReplies is built around Meta's official Instagram private replies. It does n
 1. Someone comments on your Instagram post or reel, or DMs you, or replies to your Story.
 2. Meta sends a webhook to your AutoReplies instance.
 3. AutoReplies checks the text against your active campaigns.
-4. On a keyword match, it queues a job.
-5. A background worker sends the private reply, and the public reply if you enabled one.
+4. On a keyword match, the webhook handler sends the private reply immediately (and the public reply if you enabled one).
+5. A scheduled function drains a Postgres-backed queue every five minutes: it retries anything that failed, and a polling reconciler sweeps for comments Instagram never pushed.
 
-The web app receives the webhook and serves the dashboard. A separate worker process does the sending, because the send has to survive rate limits and retries. Both talk to the same Postgres and Redis.
+One Next.js app on Netlify does all of it — dashboard, OAuth callback, webhook, and the cron routes the scheduled functions call. The only datastore is Postgres (Supabase): data, queue, and rate counters. There is no Redis and no resident worker.
 
 ## Quick start
 
-You need a few free accounts before anything works: a Meta developer app, a Resend account for login emails, and somewhere to host (Vercel for the web app, Railway for the worker plus Postgres and Redis). The Instagram account you connect has to be a Business or Creator account, not a personal one.
+You need a few accounts before anything works: a Meta developer app, a Resend account for login emails, a Netlify account (hosts the app and the scheduled functions), and a Supabase project (Postgres, free tier). The Instagram account you connect has to be a Business or Creator account, not a personal one.
 
 The honest version: the code deploys in minutes, but the Meta app setup is the part that takes real time. Read [docs/setup.md](docs/setup.md) before you start. It is the single setup guide, covering hosting, your domain, the environment, and every Meta wrong turn so you do not have to find them yourself.
 
-### Deploy the web app
+### Deploy
 
-This is the part people skip. There is no shared instance to join — the button below creates *your* deployment, on *your* domain, which is the only thing your Meta app is allowed to talk to.
-
-[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https://github.com/originalcopystudio/autoreplies)
+There is no shared instance to join — you deploy your own copy, on your own domain, which is the only thing your Meta app is allowed to talk to. Ours runs on **Netlify + Supabase**; [NETLIFY_SUPABASE.md](NETLIFY_SUPABASE.md) is the architecture note and [docs/setup.md](docs/setup.md) is the step-by-step (create the Supabase project, migrate, set Netlify env vars, `npx netlify deploy --build --prod`).
 
 ### Run it locally
 
@@ -69,13 +67,12 @@ git clone https://github.com/originalcopystudio/autoreplies.git
 cd autoreplies
 npm install
 cp .env.example .env      # then fill in the values, see docs/setup.md
-docker-compose up -d      # starts Postgres and Redis
+docker-compose up -d      # starts Postgres
 npm run db:migrate
-npm run dev               # web app on http://localhost:3000
-npm run worker            # in a second terminal, this sends the DMs
+npm run dev               # the whole app on http://localhost:3000
 ```
 
-Two processes, always. `npm run dev` serves the app and receives webhooks. `npm run worker` is what actually sends the messages. If comments come in and no DM ever arrives, the worker is the first thing to check.
+One process. The webhook handler sends DMs inline; to exercise the retry/reconciler path locally, hit the drain route yourself: `curl -H "Authorization: Bearer $CRON_SECRET" http://localhost:3000/api/cron/process-queue`.
 
 Full environment variables and the production layout are in [docs/setup.md](docs/setup.md).
 

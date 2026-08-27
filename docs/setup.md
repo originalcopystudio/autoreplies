@@ -6,92 +6,63 @@ If you would rather have an AI assistant drive most of this, skip to [Set it up 
 
 ## How it is built
 
-AutoReplies is two processes and two datastores.
+AutoReplies is one deployment and one datastore.
 
-- Web app and API: Next.js. Serves the dashboard, the OAuth callback, and the incoming webhook. Runs well on Vercel.
-- Worker: a long-running Node process (`npm run worker`) that consumes the send queue and runs the polling reconciler. It cannot run on Vercel, because serverless functions are short-lived and a queue consumer has to stay up. Railway, Render, Fly, or any always-on box works.
-- PostgreSQL: campaigns, logs, accounts, sessions.
-- Redis: the BullMQ send queue and the per-account rate limiter.
-
-The web app and the worker must share the same `DATABASE_URL`, the same `REDIS_URL`, and the same `ENCRYPTION_KEY`. The web app writes an encrypted Instagram token; the worker decrypts it to send. Different keys mean every send fails to decrypt.
+- Web app and API: Next.js on Netlify. Serves the dashboard, the OAuth callback, the incoming webhook, and the `/api/cron/*` routes. The webhook handler sends the DM inline on first attempt, so the common case never waits on a queue.
+- Scheduled functions: four Netlify crons (defined in `netlify.toml`) call the cron routes — `process-queue` every 5 minutes (drains retries, runs the polling reconciler that catches comments Instagram never pushed), and daily `refresh-tokens`, `attach-next-reel`, `snapshot-followers`.
+- PostgreSQL (Supabase): campaigns, logs, accounts, sessions — and also the send queue (`QueueJob`) and per-account rate counters (`RateCounter`). There is no Redis and no resident worker.
 
 ## What you need first
 
 - A Facebook account. Meta developer registration is built on it. There is no Instagram-only path.
 - An Instagram Business or Creator account. A personal account cannot be connected. Switch it in the Instagram app under Settings, Account type, if needed.
 - A [Resend](https://resend.com) account for login emails, with a verified sender domain. Login is email magic links only, so without this nobody can sign in. If you already run your own mail server, you can point `EMAIL_SERVER` at it instead and skip Resend entirely — see the [environment variables](#environment-variables) table.
-- Somewhere to host. The recommended setup, used throughout this guide, is Vercel for the web app and Railway for the worker plus Postgres and Redis. Both have free tiers that are enough to run this for a single account.
+- A [Netlify](https://netlify.com) account (hosts the app and the scheduled functions) and a [Supabase](https://supabase.com) project (Postgres, free tier).
 
 ## Hosting and your domain
 
-You do not need to buy a domain. Deploying the web app to Vercel gives you a free public URL like `your-app.vercel.app`, and that URL is what everything else points at: `NEXTAUTH_URL`, the Meta OAuth redirect, and the Meta webhook callback all use it. If you want a custom domain later you can add one, but it is optional and you can launch without it.
+Deploying to Netlify gives you a free public URL like `your-app.netlify.app`, and that URL is what everything else points at: `NEXTAUTH_URL`, the Meta OAuth redirect, and the Meta webhook callback all use it. A custom domain (ours is `reply.originalcopy.studio`) is optional — but pick whichever you'll keep *before* configuring the Meta app, because changing it later means updating every Meta URL.
 
-Recommended split:
+Do Supabase first, because Netlify needs the database URL from it.
 
-- Web app: Vercel. You get `your-app.vercel.app` for free on deploy.
-- Worker, Postgres, Redis: Railway.
+### Step 1: Supabase (Postgres, including the queue)
 
-Do Railway first, because Vercel needs the database URLs from it.
+1. Create a Supabase project. Note the database password you set.
+2. Open the project's **Connect** panel. You need both connection strings:
 
-### Step 1: Railway (Postgres, Redis, worker)
-
-1. Create a Railway account and a New Project.
-2. In the project, click New, then Database, then Add PostgreSQL.
-3. Click New, then Database, then Add Redis.
-4. Add the worker: click New, then GitHub Repo, and select your fork of this repo. Railway detects the Node app.
-5. Open the worker service's Settings and set the Build Command and Start Command:
-   ```
-   Build Command:  npm run db:generate
-   Start Command:  npm run worker
-   ```
-   The worker only needs the generated Prisma client, not `next build`. Do not leave the build as the default `npm run build`: it runs `next build` needlessly, and any build step that reaches the database (like `prisma migrate deploy`) fails here, because the worker cannot connect to Postgres at build time. Migrations are applied by the web app's `vercel-build` (Step 3) and by the manual `db:migrate` below, never by the worker.
-6. Open the worker service's Variables and add all the environment variables from the [table below](#environment-variables). For the worker, use Railway's internal database and Redis hostnames (they look like `postgres.railway.internal` and `redis.railway.internal`); inside Railway's network they are faster and free of egress. `NEXTAUTH_URL` is your Vercel domain. `ENCRYPTION_KEY` must be the exact same value you will use on Vercel.
-
-Getting the connection URLs. Open the Postgres service, then its Variables or Connect tab. You will see two URLs:
-
-| Variable | Host | Use it for |
+| Connection | Port | Use it for |
 | --- | --- | --- |
-| `DATABASE_URL` | `postgres.railway.internal` | the Railway worker only |
-| `DATABASE_PUBLIC_URL` | `*.proxy.rlwy.net` | Vercel, and running migrations from your machine |
+| Transaction pooler (`...pooler.supabase.com`) | `6543` | `DATABASE_URL` on Netlify (the app) |
+| Direct (`db.<ref>.supabase.co`) | `5432` | running migrations from your machine |
 
-Redis is the same: `REDIS_URL` (internal) for the worker, `REDIS_PUBLIC_URL` (public proxy) for Vercel.
-
-Vercel runs outside Railway's private network, so if you give Vercel an internal `*.railway.internal` URL it will hang and time out. Always give Vercel the public URLs.
+The pooler hostname is region-specific — copy it from the dashboard, do not guess it.
 
 ### Step 2: Migrate the production database
 
-Run once from your machine, using the public Postgres URL:
+Run once from your machine, using the **direct** connection string:
 
 ```bash
-DATABASE_URL="postgresql://...proxy.rlwy.net.../railway" npm run db:migrate
+DATABASE_URL="postgresql://postgres:...@db.<ref>.supabase.co:5432/postgres" npm run db:migrate
 ```
 
-### Step 3: Vercel (web app, and your domain)
+### Step 3: Netlify (web app, functions, and your domain)
 
-1. Create a Vercel account and Add New Project, importing your fork. It auto-detects Next.js.
-2. Under the project's Settings, then Environment Variables, add every variable from the [table below](#environment-variables). Use these values:
-   - `NEXTAUTH_URL`: your Vercel domain, for example `https://your-app.vercel.app`. This is the free domain Vercel assigns on deploy.
-   - `DATABASE_URL` and `REDIS_URL`: the public Railway URLs (`DATABASE_PUBLIC_URL` and `REDIS_PUBLIC_URL` from Railway).
-   - `ENCRYPTION_KEY`: the exact same value as on the worker.
-3. Deploy. The build runs `prisma generate` before `next build`, so the Prisma client is generated even though it is gitignored.
-4. The daily token-refresh cron is wired up in `vercel.json`.
-
-Note on crons: Vercel's free plan allows each cron to run at most once per day. The repo's crons are set to daily for that reason. The comment polling reconciler does not use a Vercel cron; it runs inside the Railway worker on its own interval, so the free plan is not a constraint there.
-
-Optional custom domain: if you want `autoreplies.yoursite.com` instead of the Vercel URL, add it in Vercel under Domains and make it primary. Then update `NEXTAUTH_URL` and the two Meta URLs (Step 7 and Step 8 below) to the new domain, and update the worker's `NEXTAUTH_URL` too, or tracked links in DMs will point at the old domain.
+1. Create a Netlify site from your fork (dashboard import, or `npx netlify sites:create` + `npx netlify link` from the repo).
+2. Add every variable from the [table below](#environment-variables) under Site settings → Environment variables. `NEXTAUTH_URL` is your Netlify domain (or custom domain). `DATABASE_URL` is the **pooled** Supabase string.
+3. Deploy: `npx netlify deploy --build --prod`. The build runs `prisma generate` before `next build`, and the four scheduled functions register automatically from `netlify.toml`.
+4. Optional custom domain: add it under Domain management (with Netlify DNS it is one click). Then update `NEXTAUTH_URL` and use that domain in the Meta steps below.
 
 ## Environment variables
 
-Copy `.env.example` to `.env` for local work, or set these in Vercel and Railway for hosting.
+Copy `.env.example` to `.env` for local work, or set these in Netlify's site environment variables for hosting.
 
 | Variable | What it is |
 | --- | --- |
-| `NEXTAUTH_URL` | Your public URL. Your Vercel domain in production, your tunnel URL locally. |
+| `NEXTAUTH_URL` | Your public URL. Your Netlify (or custom) domain in production, your tunnel URL locally. |
 | `NEXTAUTH_SECRET` | Random secret. `openssl rand -base64 32` |
 | `CRON_SECRET` | Random secret protecting the token-refresh cron. |
-| `ENCRYPTION_KEY` | 32-byte hex. `openssl rand -hex 32`. Encrypts Instagram tokens. Identical across web and worker. |
-| `DATABASE_URL` | PostgreSQL connection string. Public Railway URL on Vercel; internal on the worker. |
-| `REDIS_URL` | Redis connection string. Must support blocking commands, so an HTTP-only Redis will not work with BullMQ. |
+| `ENCRYPTION_KEY` | 32-byte hex. `openssl rand -hex 32`. Encrypts Instagram tokens at rest. |
+| `DATABASE_URL` | PostgreSQL connection string. On Netlify use the Supabase **pooled** string (port 6543); for migrations from your machine use the **direct** string (port 5432). |
 | `RESEND_API_KEY` | Resend key. Login is email magic links only, so without this nobody can sign in. |
 | `EMAIL_FROM` | A sender on a domain you verified in Resend. The placeholder will not deliver. |
 | `EMAIL_SERVER` | Optional. An SMTP URL, for example `smtps://login%40example.com:password@mail.example.com:465`. Set it to send magic links through your own mail server instead of Resend; then `RESEND_API_KEY` is not needed. URL-encode special characters in the user and password (`@` becomes `%40`). Port 465 with `smtps://` is implicit TLS, port 587 with `smtp://` is STARTTLS. |
@@ -107,13 +78,13 @@ Optional, for tuning the polling reconciler (defaults are fine to start):
 
 | Variable | Default | What it does |
 | --- | --- | --- |
-| `COMMENT_POLL_INTERVAL_MS` | `300000` | How often the worker sweeps for missed comments (5 min). |
+| `COMMENT_POLL_INTERVAL_MS` | `300000` | Minimum gap between reconciler sweeps for missed comments (5 min; sweeps run inside the process-queue cron). |
 | `COMMENT_POLL_MAX_PER_SWEEP` | `30` | Max new comments each campaign acts on per sweep. Keep it conservative; higher gets closer to Instagram's rate limits. |
 | `COMMENT_POLL_LOOKBACK_HOURS` | `72` | How far back a sweep considers comments. |
 
 ## The Meta app
 
-This is the slow part. The code works out of the box; getting Meta to send you comment events is where people lose an afternoon. Every step here exists because skipping it breaks something later. Have your Vercel domain from Step 3 ready, you will paste it in a few times.
+This is the slow part. The code works out of the box; getting Meta to send you comment events is where people lose an afternoon. Every step here exists because skipping it breaks something later. Have your Netlify domain from Step 3 ready, you will paste it in a few times.
 
 ### Step 4: Create the Meta app
 
@@ -159,7 +130,7 @@ Until you accept here, the account is not really a tester and the login will kee
 
 ### Step 7: Register the OAuth redirect
 
-In the Instagram product, open Set up Instagram business login, then Business login settings. In the OAuth redirect URIs field, add exactly, using your Vercel domain:
+In the Instagram product, open Set up Instagram business login, then Business login settings. In the OAuth redirect URIs field, add exactly, using your Netlify domain:
 
 ```
 https://your-app.vercel.app/api/instagram/callback
@@ -188,7 +159,7 @@ If your primary domain ever changes, update this callback URL to the new domain.
 
 Real comment webhooks are only delivered when the app is in Live state. In Development mode, only the console Test button delivers events. This is the single most common reason for "I set everything up and nothing happens."
 
-Go to the Publish item in the left sidebar. Set the privacy policy, terms of service, and data deletion URLs first, or it will not let you publish. AutoReplies ships these pages, on your Vercel domain:
+Go to the Publish item in the left sidebar. Set the privacy policy, terms of service, and data deletion URLs first, or it will not let you publish. AutoReplies ships these pages, on your Netlify domain:
 
 ```
 https://your-app.vercel.app/privacy
@@ -230,13 +201,13 @@ Meta's `/me` returns two IDs. The `id` field is app-scoped. The `user_id` field 
 4. From a different Instagram account, comment `TEST` on that post. It must be a different account, because AutoReplies ignores your own comments on purpose.
 5. Watch for the DM. If nothing arrives, check the DM Logs page and `/api/health`.
 
-Hit `/api/health` any time. It reports the database, Redis, queue, and worker heartbeat. If `worker.healthy` is false, the worker is not running or cannot reach Redis, and no DM will send even though webhooks are being received.
+Hit `/api/health` any time. It reports the database, the queue, and the drain heartbeat. If `worker.healthy` is false, the `process-queue` scheduled function has not run recently — check Netlify's function logs.
 
-If you want to inspect where a comment stopped, the Postgres tables tell you: `WebhookEvent` for delivery, `DmLog` for send status and errors, `OperationalEvent` for worker crashes and the polling reconciler's sweep logs.
+If you want to inspect where a comment stopped, the Postgres tables tell you: `WebhookEvent` for delivery, `DmLog` for send status and errors, `OperationalEvent` for pipeline errors and the polling reconciler's sweep logs.
 
 ## Local development
 
-You need Postgres and Redis. The included `docker-compose.yml` starts both:
+You need Postgres. The included `docker-compose.yml` starts it:
 
 ```bash
 docker-compose up -d
@@ -247,20 +218,20 @@ npm run db:migrate
 Or install them natively (macOS):
 
 ```bash
-brew install postgresql@16 redis
+brew install postgresql@16
 brew services start postgresql@16
-brew services start redis
 createdb autoreplies
 ```
 
 Then set `DATABASE_URL` to match your local user, for example `postgresql://YOUR_USER@localhost:5432/autoreplies`.
 
-Run the two processes in separate terminals:
+Run the app:
 
 ```bash
 npm run dev
-npm run worker
 ```
+
+DMs send inline from the webhook handler. To exercise the retry/reconciler path, call the drain route yourself: `curl -H "Authorization: Bearer $CRON_SECRET" http://localhost:3000/api/cron/process-queue`.
 
 For Meta to reach your local webhook, run a tunnel and point `NEXTAUTH_URL` and the Meta webhook and redirect URLs at the tunnel:
 
@@ -285,24 +256,23 @@ or host it for other people to sign up.>
 Work through this in order and stop to ask me whenever you need a value or an
 action only I can do:
 
-1. Local or hosted. Ask me which I want. If hosted, we use Vercel for the web
-   app (its domain becomes my public URL) and Railway for the worker plus
-   Postgres and Redis. If local, we use docker-compose and a tunnel.
+1. Local or hosted. Ask me which I want. If hosted, we use Netlify for the web
+   app and scheduled functions (its domain becomes my public URL) and Supabase
+   for Postgres. If local, we use docker-compose and a tunnel.
 
-2. Datastores. Help me get a Postgres and a Redis running, then run the Prisma
-   migration against them.
+2. Datastore. Help me create the Supabase project (or local Postgres), then run
+   the Prisma migration against the direct connection string.
 
 3. Environment. Generate NEXTAUTH_SECRET, CRON_SECRET, ENCRYPTION_KEY, and
    WEBHOOK_VERIFY_TOKEN for me. Ask me for my Resend API key and a verified
-   sender address, and for the three Meta secrets once I create the app. Make
-   sure ENCRYPTION_KEY is identical on the web app and the worker.
+   sender address, and for the three Meta secrets once I create the app.
 
-4. Deploy both processes and confirm /api/health returns ok with the worker
-   healthy.
+4. Deploy to Netlify and confirm /api/health returns ok with worker.healthy
+   true (trigger the process-queue cron once if needed).
 
 5. Meta app. Walk me through the Meta app section of docs/setup.md one step at a
    time. This is the slow part. Tell me exactly what to click and what to paste,
-   using my Vercel domain for the OAuth redirect and webhook. Remember the
+   using my Netlify (or custom) domain for the OAuth redirect and webhook. Remember the
    account ID trap (store user_id, not id) and that the app must be published
    for real webhooks to arrive.
 
@@ -313,8 +283,8 @@ Rules for you:
 - Never invent Meta dashboard steps. If a screen does not match the guide, ask
   me to screenshot it.
 - Diagnose failures by querying the Postgres tables directly: WebhookEvent for
-  delivery, DmLog for send status, OperationalEvent for worker errors. This is
-  faster than logs.
+  delivery, DmLog for send status, OperationalEvent for pipeline errors. This
+  is faster than logs.
 - Remind me to rotate any secret I paste to you before real use.
 
 Start by reading the docs, then ask me question 1.

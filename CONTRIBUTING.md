@@ -4,7 +4,7 @@ Thanks for wanting to help. AutoReplies is public so the comment-to-DM engine is
 
 ## Ways to help
 
-- Fix a bug. The DM worker and the webhook parser are the parts that matter most.
+- Fix a bug. The DM pipeline (webhook handler + queue drain) and the webhook parser are the parts that matter most.
 - Improve the docs. If you hit a Meta setup quirk that is not written down, adding it to `docs/setup.md` is as valuable as a code fix. That guide is where people lose the most time.
 - Add campaign templates in `lib/templates/`.
 - Add tests. The suite runs with `npm test`.
@@ -20,10 +20,10 @@ npm run db:migrate
 npm run dev
 ```
 
-Run the worker in a second terminal, since it is what sends the DMs:
+DMs send inline from the webhook handler; to exercise the retry/reconciler path, trigger the drain route:
 
 ```bash
-npm run worker
+curl -H "Authorization: Bearer $CRON_SECRET" http://localhost:3000/api/cron/process-queue
 ```
 
 ## Before you open a pull request
@@ -49,7 +49,7 @@ A template contribution should include a name, the target niche, a suggested pos
 
 ## Reporting bugs
 
-Open an issue with what you did, what you expected, and what happened. For anything involving a webhook or a failed send, the Postgres tables describe it best: `WebhookEvent` for delivery, `DmLog` for send status, `OperationalEvent` for worker errors.
+Open an issue with what you did, what you expected, and what happened. For anything involving a webhook or a failed send, the Postgres tables describe it best: `WebhookEvent` for delivery, `DmLog` for send status, `OperationalEvent` for pipeline errors.
 
 ## Security
 
