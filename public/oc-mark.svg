@@ -1,0 +1,17 @@
+<svg viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Original Copy OC monogram">
+  <defs>
+    <mask id="ocmask" maskUnits="userSpaceOnUse" x="0" y="0" width="1024" height="1024">
+      <rect x="0" y="0" width="1024" height="1024" fill="#000"/>
+      <!-- C disc, mouth cut on the right, then hole -->
+      <circle cx="636" cy="512" r="178" fill="#fff"/>
+      <polygon points="636,512 900,327 900,697" fill="#000"/>
+      <circle cx="636" cy="512" r="92" fill="#000"/>
+      <!-- offset gap: hide C where O overlaps -->
+      <circle cx="388" cy="512" r="200" fill="#000"/>
+      <!-- O in front -->
+      <circle cx="388" cy="512" r="178" fill="#fff"/>
+      <circle cx="388" cy="512" r="92" fill="#000"/>
+    </mask>
+  </defs>
+  <rect x="0" y="0" width="1024" height="1024" fill="#F0A24A" mask="url(#ocmask)"/>
+</svg>

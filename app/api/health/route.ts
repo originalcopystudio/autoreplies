@@ -1,0 +1,75 @@
+import { NextResponse } from "next/server";
+import { prisma } from "@/lib/db/client";
+import { getDMQueue } from "@/lib/queue/client";
+import { getWorkerHealth } from "@/lib/ops/worker-health";
+
+export const runtime = "nodejs";
+// Health must reflect live state (worker heartbeat, queue depth), never a
+// cached response, or it reports stale worker start times.
+export const dynamic = "force-dynamic";
+
+type CheckStatus = "ok" | "error";
+
+interface HealthCheck {
+  status: CheckStatus;
+  detail?: string;
+}
+
+async function checkDatabase(): Promise<HealthCheck> {
+  try {
+    await prisma.$queryRaw`SELECT 1`;
+    return { status: "ok" };
+  } catch (error) {
+    return {
+      status: "error",
+      detail: error instanceof Error ? error.message : "Database check failed",
+    };
+  }
+}
+
+async function checkQueue(): Promise<HealthCheck & { counts?: unknown }> {
+  try {
+    const counts = await getDMQueue().getJobCounts(
+      "waiting",
+      "active",
+      "delayed",
+      "failed"
+    );
+    return { status: "ok", counts };
+  } catch (error) {
+    return {
+      status: "error",
+      detail: error instanceof Error ? error.message : "Queue check failed",
+    };
+  }
+}
+
+export async function GET() {
+  const [database, queue, worker] = await Promise.all([
+    checkDatabase(),
+    checkQueue(),
+    getWorkerHealth().catch((error) => ({
+      healthy: false,
+      heartbeat: null,
+      ageMs: null,
+      error: error instanceof Error ? error.message : "Worker check failed",
+    })),
+  ]);
+
+  // Serverless port: "worker" now means the drain heartbeat (webhook-inline or
+  // the process-queue cron). No Redis — the queue lives in Postgres.
+  const healthy =
+    database.status === "ok" && queue.status === "ok" && worker.healthy;
+
+  return NextResponse.json(
+    {
+      status: healthy ? "ok" : "degraded",
+      checks: {
+        database,
+        queue,
+        worker,
+      },
+    },
+    { status: healthy ? 200 : 503 }
+  );
+}

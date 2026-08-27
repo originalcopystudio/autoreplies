@@ -1,0 +1,96 @@
+@import "tailwindcss";
+@import url("https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400..800&family=Hanken+Grotesk:wght@400;500;600;700&display=swap");
+
+/* ManyChat Alternative — Design System
+   Plain and functional. No gradients, glass, glow, or animation. */
+
+@theme inline {
+  --color-background: #F5F1E8;
+  --color-foreground: #141210;
+  --color-surface: #EFE9DC;
+  --color-surface-hover: #E9E0CE;
+  --color-border: #E0D8C6;
+  --color-border-hover: #CFC5AE;
+  --color-muted: #6E675C;
+  --color-accent: #C87A1B;
+  --color-accent-hover: #B36C15;
+  --color-success: #16a34a;
+  --color-error: #dc2626;
+  --color-warning: #d97706;
+  --font-sans: "Hanken Grotesk", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: ui-monospace, monospace;
+}
+
+html {
+  color-scheme: light;
+}
+
+body {
+  background: var(--color-background);
+  color: var(--color-foreground);
+  font-family: var(--font-sans);
+}
+
+/* Focus ring — visible, for keyboard users. */
+:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+/* Form fields already have a border, so keep the focus ring hugging the
+   field instead of bleeding up toward the label above it. */
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+  outline-offset: 1px;
+}
+
+/* iOS Safari zooms the whole page in when a focused field's text is under 16px,
+   and never zooms back out. Fields are text-sm (14px) throughout, so raise them
+   to 16px on phones and leave the desktop sizing alone. */
+@media (max-width: 640px) {
+  input,
+  textarea,
+  select {
+    font-size: 16px;
+  }
+}
+
+/* Panel — flat container. Replaces .glass / .glass-strong. */
+.panel {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+}
+
+/* Kept as no-op aliases so existing markup degrades to plain surfaces
+   instead of breaking. Prefer .panel in new code. */
+.glass,
+.glass-strong {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+}
+
+.gradient-mesh {
+  background: none;
+}
+
+.animate-fade-in,
+.animate-slide-in,
+.animate-pulse-glow,
+.stagger > * {
+  animation: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* Original Copy brand type: Bricolage Grotesque for display, Hanken for body. */
+h1, h2, h3, h4, .font-display {
+  font-family: "Bricolage Grotesque", "Hanken Grotesk", system-ui, sans-serif;
+}
