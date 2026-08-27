@@ -295,12 +295,7 @@ export default async function Home() {
           <Link href="/" className="flex items-center gap-3" aria-label="AutoReplies home">
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img src="/oc-mark.svg" alt="" className="h-9 w-9" />
-            <span className="font-display text-[13px] font-semibold uppercase leading-[1.1] tracking-[0.14em] text-[#F5F1E8]">
-              Original<br />Copy Studio
-            </span>
-            <span className="ml-2 hidden border-l border-[#2C2720] pl-3 text-sm font-semibold text-[#8A8375] sm:inline">
-              AutoReplies
-            </span>
+            <span className="font-display text-lg font-bold text-[#F5F1E8]">AutoReplies</span>
           </Link>
 
           <div className="flex items-center gap-4">
