@@ -28,8 +28,10 @@ export default function DataDeletionPage() {
             hello@originalcopy.studio
           </a>{" "}
           with the subject &quot;Delete my data&quot; and your Instagram
-          username. We will delete your comments, delivery records and link
-          clicks from AutoReplies within 30 days and confirm by email.
+          username. We will delete your comments and the records of replies
+          sent to you within 30 days and confirm by email. Link clicks are
+          stored against a scrambled form of the IP address, not your
+          username, so we can&apos;t match them to you.
         </p>
       </section>
 
