@@ -7,7 +7,7 @@ export const metadata: Metadata = {
     "How AutoReplies, run by Original Copy Studio in Singapore, handles Instagram comments, private replies, link clicks and customer account data.",
 };
 
-const sectionTitle = "text-xl font-bold text-white";
+const sectionTitle = "text-xl font-bold text-foreground";
 const link = "text-accent underline underline-offset-4";
 
 export default function PrivacyPage() {

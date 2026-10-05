@@ -7,7 +7,7 @@ export const metadata: Metadata = {
     "How to delete your data from AutoReplies, whether you commented on a connected Instagram post or use AutoReplies for your own account.",
 };
 
-const sectionTitle = "text-xl font-bold text-white";
+const sectionTitle = "text-xl font-bold text-foreground";
 const link = "text-accent underline underline-offset-4";
 
 export default function DataDeletionPage() {
